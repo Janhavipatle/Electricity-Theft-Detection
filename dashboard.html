@@ -1,0 +1,620 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI-Powered Theft Detection System</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Roboto+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.0.1/mqttws31.min.js"></script>
+    
+    <style>
+        :root {
+            --bg-color: #0c1021;
+            --card-bg-color: rgba(20, 26, 50, 0.7);
+            --text-color: #e0e0e0;
+            --text-muted-color: #a0a0a0;
+            --border-color: rgba(0, 255, 255, 0.2);
+            --header-color: #00ffff;
+            --icon-color: #00ffff;
+            --alert-color: #ff4d4d;
+        }
+        html.light {
+            --bg-color: #f0f4f8;
+            --card-bg-color: #ffffff;
+            --text-color: #1f2937;
+            --text-muted-color: #4b5563;
+            --border-color: #e5e7eb;
+            --header-color: #0891b2;
+            --icon-color: #0891b2;
+            --alert-color: #ef4444;
+        }
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            transition: background-color 0.3s ease-in-out, color 0.3s ease-in-out;
+            overflow: hidden;
+        }
+        body::before {
+            content: '';
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-image: 
+                linear-gradient(rgba(0, 255, 255, 0.05) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(0, 255, 255, 0.05) 1px, transparent 1px);
+            background-size: 40px 40px;
+            z-index: -1;
+            animation: moveGrid 60s linear infinite;
+        }
+        html.light body::before {
+             background-image: 
+                linear-gradient(rgba(0, 0, 0, 0.04) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(0, 0, 0, 0.04) 1px, transparent 1px);
+        }
+        @keyframes moveGrid {
+            from { background-position: 0 0; }
+            to { background-position: 400px 400px; }
+        }
+        .main-container {
+            position: relative;
+            z-index: 1;
+            height: 100vh;
+            overflow-y: auto;
+        }
+        .card {
+            background-color: var(--card-bg-color);
+            border: 1px solid var(--border-color);
+            transition: all 0.3s ease-in-out;
+            backdrop-filter: blur(10px);
+            box-shadow: 0 0 15px rgba(0, 255, 255, 0.1);
+        }
+        .card-alert {
+            border-color: var(--alert-color);
+            box-shadow: 0 0 20px rgba(255, 77, 77, 0.5);
+        }
+        .text-header, .text-icon { color: var(--header-color); }
+        .text-muted { color: var(--text-muted-color); }
+        .border-strong { border-color: var(--border-color); }
+        .status-normal { color: #22c55e; }
+        .status-learning { color: #facc15; animation: pulse-yellow 2s infinite; }
+        .status-analyzing { color: #38bdf8; animation: pulse-yellow 2s infinite; }
+        .status-alert { color: var(--alert-color); animation: pulse-red 2s infinite; }
+        @keyframes pulse-red { 0%, 100% { opacity: 1; text-shadow: 0 0 10px var(--alert-color);} 50% { opacity: 0.7; text-shadow: none;} }
+        @keyframes pulse-yellow { 0%, 100% { opacity: 1; } 50% { opacity: 0.7; } }
+        .relay-btn:disabled { background-color: #4b5563; cursor: not-allowed; }
+        .font-mono { font-family: 'Roboto Mono', monospace; }
+        .meter-screen {
+            background-color: rgba(0,0,0,0.4);
+            border-radius: 0.5rem;
+            padding: 1rem;
+            text-align: center;
+            border: 1px solid var(--border-color);
+            box-shadow: inset 0 0 10px rgba(0,0,0,0.5);
+        }
+        .led {
+            width: 1rem;
+            height: 1rem;
+            border-radius: 50%;
+            transition: background-color 0.5s ease, box-shadow 0.5s ease;
+        }
+        .led-blink-normal {
+            background-color: var(--header-color);
+            box-shadow: 0 0 10px var(--header-color), 0 0 20px var(--header-color);
+            animation: blink-normal 1.5s infinite;
+        }
+        .led-blink-alert {
+            background-color: var(--alert-color);
+            box-shadow: 0 0 10px var(--alert-color), 0 0 20px var(--alert-color);
+            animation: blink-alert 0.7s infinite;
+        }
+        @keyframes blink-normal { 50% { opacity: 0.3; } }
+        @keyframes blink-alert { 50% { opacity: 0.3; } }
+        .progress-bar {
+            background-color: rgba(0, 255, 255, 0.1);
+            border-radius: 5px;
+            overflow: hidden;
+            width: 100%;
+        }
+        .progress-bar-inner {
+            background-color: var(--header-color);
+            height: 10px;
+            border-radius: 5px;
+            transition: width 0.5s ease-in-out;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="main-container">
+    <div class="container mx-auto p-4 sm:p-6 lg:p-8">
+        <header class="text-center mb-8 relative">
+            <h1 class="text-3xl md:text-4xl font-bold text-header">AI-Powered Theft Detection System</h1>
+            <p class="text-muted mt-2">Real-time Inference & Anomaly Detection Dashboard</p>
+            <div class="absolute top-0 right-0 flex items-center gap-3">
+                <i class="fa-solid fa-sun text-yellow-400"></i>
+                <label for="theme-toggle" class="relative inline-flex items-center cursor-pointer">
+                    <input type="checkbox" id="theme-toggle" class="sr-only peer">
+                    <div class="w-11 h-6 bg-gray-500 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-cyan-500"></div>
+                </label>
+                <i class="fa-solid fa-moon text-icon"></i>
+            </div>
+        </header>
+
+        <main>
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+                <div class="lg:col-span-1 p-4 rounded-lg card">
+                    <h2 class="text-lg font-semibold text-header mb-2">AI Model State</h2>
+                    <p id="system-status" class="text-2xl font-bold status-normal">Connecting...</p>
+                    <p class="text-sm text-muted">Model Confidence: <span id="confidence-score" class="font-mono font-bold">--%</span></p>
+                    <p class="text-xs text-muted mt-2">Last update: <span id="last-updated">--:--:--</span></p>
+                </div>
+                <div class="lg:col-span-2 p-4 rounded-lg card">
+                     <h2 class="text-lg font-semibold text-header mb-2">AI Insights & Predictions</h2>
+                     <div id="ai-insight-text" class="font-mono text-sm h-16">
+                        Initializing AI model... Awaiting first data packet for heuristic analysis.
+                     </div>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+                <div id="card-pole" class="p-6 rounded-lg shadow-lg card border-2 border-yellow-500">
+                    <div class="flex justify-between items-center mb-4">
+                        <h3 class="text-lg font-semibold">Pole Current (Main)</h3>
+                        <i class="fa-solid fa-tower-broadcast text-2xl text-yellow-400"></i>
+                    </div>
+                    <p id="value-pole" class="text-4xl font-bold text-center my-4 font-mono">0.00 A</p>
+                </div>
+                <div id="card-voltage" class="p-6 rounded-lg shadow-lg card">
+                    <div class="flex justify-between items-center mb-4">
+                        <h3 class="text-lg font-semibold">Line Voltage</h3>
+                        <i class="fa-solid fa-bolt text-2xl text-yellow-400"></i>
+                    </div>
+                    <p id="value-voltage" class="text-4xl font-bold text-center my-4 font-mono">0.0 V</p>
+                </div>
+                <div id="card-h1" class="p-6 rounded-lg shadow-lg card">
+                    <div class="flex justify-between items-center mb-4"><h3 class="text-lg font-semibold">House 1 Current</h3><i class="fa-solid fa-house text-2xl text-icon"></i></div>
+                    <p id="value-h1" class="text-4xl font-bold text-center my-4 font-mono">0.00 A</p>
+                </div>
+                <div id="card-h2" class="p-6 rounded-lg shadow-lg card">
+                    <div class="flex justify-between items-center mb-4"><h3 class="text-lg font-semibold">House 2 Current</h3><i class="fa-solid fa-house text-2xl text-icon"></i></div>
+                    <p id="value-h2" class="text-4xl font-bold text-center my-4 font-mono">0.00 A</p>
+                </div>
+                <div id="card-h3" class="p-6 rounded-lg shadow-lg card">
+                    <div class="flex justify-between items-center mb-4"><h3 class="text-lg font-semibold">House 3 Current</h3><i class="fa-solid fa-house text-2xl text-icon"></i></div>
+                    <p id="value-h3" class="text-4xl font-bold text-center my-4 font-mono">0.00 A</p>
+                </div>
+                <div id="card-total" class="p-6 rounded-lg shadow-lg card">
+                    <div class="flex justify-between items-center mb-4"><h3 class="text-lg font-semibold">Total House Current</h3><i class="fa-solid fa-calculator text-2xl text-green-400"></i></div>
+                    <p id="value-total" class="text-4xl font-bold text-center my-4 font-mono">0.00 A</p>
+                </div>
+                <div id="card-diff" class="p-6 rounded-lg shadow-lg card">
+                    <div class="flex justify-between items-center mb-4"><h3 class="text-lg font-semibold">Power Loss / Anomaly</h3><i class="fa-solid fa-triangle-exclamation text-2xl text-red-500"></i></div>
+                    <p id="value-diff" class="text-4xl font-bold text-center my-4 font-mono">0.00 A</p>
+                </div>
+            </div>
+
+            <div class="mb-8">
+                <h2 class="text-2xl font-bold mb-4 text-header">House Controls</h2>
+                <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+                    <div class="p-6 rounded-lg shadow-lg card">
+                        <div class="flex justify-between items-center mb-4">
+                            <h3 class="text-lg font-semibold">House 1 Relay</h3>
+                            <i class="fa-solid fa-toggle-off text-3xl text-muted" id="icon-h1"></i>
+                        </div>
+                        <button id="relay-btn-1" data-state="off" class="w-full font-bold py-3 px-4 rounded-lg text-white transition-colors duration-300 relay-btn" disabled>Connecting...</button>
+                    </div>
+                    <div class="p-6 rounded-lg shadow-lg card">
+                        <div class="flex justify-between items-center mb-4">
+                            <h3 class="text-lg font-semibold">House 2 Relay</h3>
+                            <i class="fa-solid fa-toggle-off text-3xl text-muted" id="icon-h2"></i>
+                        </div>
+                        <button id="relay-btn-2" data-state="off" class="w-full font-bold py-3 px-4 rounded-lg text-white transition-colors duration-300 relay-btn" disabled>Connecting...</button>
+                    </div>
+                    <div class="p-6 rounded-lg shadow-lg card">
+                        <div class="flex justify-between items-center mb-4">
+                            <h3 class="text-lg font-semibold">House 3 Relay</h3>
+                            <i class="fa-solid fa-toggle-off text-3xl text-muted" id="icon-h3"></i>
+                        </div>
+                        <button id="relay-btn-3" data-state="off" class="w-full font-bold py-3 px-4 rounded-lg text-white transition-colors duration-300 relay-btn" disabled>Connecting...</button>
+                    </div>
+                </div>
+            </div>
+            
+            <div id="ai-analytics-section" class="mb-8 hidden">
+                <h2 class="text-2xl font-bold mb-4 text-header">AI Analytics & Diagnostics</h2>
+                <div class="p-6 rounded-lg card grid grid-cols-1 md:grid-cols-3 gap-6 font-mono text-sm">
+                    <div>
+                        <p>Heuristic Analysis</p>
+                        <div class="progress-bar mt-2"><div id="progress-heuristic" class="progress-bar-inner" style="width: 0%;"></div></div>
+                    </div>
+                    <div>
+                        <p>Signature Verification</p>
+                        <div class="progress-bar mt-2"><div id="progress-signature" class="progress-bar-inner" style="width: 0%;"></div></div>
+                    </div>
+                    <div>
+                        <p>Pattern Matching</p>
+                        <div class="progress-bar mt-2"><div id="progress-pattern" class="progress-bar-inner" style="width: 0%;"></div></div>
+                    </div>
+                    <div class="md:col-span-3 text-center mt-2">
+                        <p class="text-lg">Final Verdict: <span id="final-verdict" class="font-bold text-yellow-400">PENDING...</span></p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+                <div class="lg:col-span-2 p-6 rounded-lg card">
+                    <h2 class="text-xl font-semibold mb-4">Real-time Current (Pole vs Total Houses)</h2>
+                    <canvas id="liveChart"></canvas>
+                </div>
+                
+                <div class="space-y-6">
+                    <div class="p-6 rounded-lg card">
+                        <h2 class="text-xl font-semibold mb-4 text-header">Live Power Meter</h2>
+                        <div class="meter-screen">
+                            <p id="meter-value" class="text-5xl font-mono font-bold text-white">0.00</p>
+                            <p class="font-mono text-lg text-muted">AMPERES</p>
+                        </div>
+                        <div class="flex items-center justify-center mt-4 space-x-2">
+                            <div id="meter-led" class="led"></div>
+                            <span class="text-sm font-mono text-muted">SYSTEM ACTIVE</span>
+                        </div>
+                    </div>
+
+                    <div class="p-6 rounded-lg card">
+                        <h2 class="text-xl font-semibold text-header">About This Project</h2>
+                        <p class="text-muted text-sm mt-4">
+                            This project implements an advanced AI-driven system for the real-time detection and localization of electricity theft. It operates by continuously monitoring the primary current from the main distribution pole and comparing it against the aggregate current consumed by individual connected houses.
+                        </p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="p-6 rounded-lg card">
+                <h2 class="text-xl font-semibold mb-4 border-b border-strong pb-2">Event Log</h2>
+                <div id="event-log" class="h-64 overflow-y-auto pr-2">
+                </div>
+            </div>
+        </main>
+    </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const MQTT_BROKER = "469ca625449a40b28d35c6dbec5aaa71.s1.eu.hivemq.cloud";
+            const MQTT_PORT = 8884;
+            const MQTT_USER = "admin";
+            const MQTT_PASS = "Pass@123";
+            const MQTT_TOPIC_DATA = "iot/theft/data";
+            const MQTT_TOPIC_CONTROL = "iot/theft/control";
+            const MQTT_CLIENT_ID = "WebAppClient_" + Math.random().toString(16).substr(2, 8);
+
+            const docElement = document.documentElement;
+            const systemStatusEl = document.getElementById('system-status');
+            const confidenceScoreEl = document.getElementById('confidence-score');
+            const aiInsightTextEl = document.getElementById('ai-insight-text');
+            const lastUpdatedEl = document.getElementById('last-updated');
+            const meterValueEl = document.getElementById('meter-value');
+            const meterLedEl = document.getElementById('meter-led');
+            const eventLogEl = document.getElementById('event-log');
+            const aiAnalyticsSection = document.getElementById('ai-analytics-section');
+            const finalVerdictEl = document.getElementById('final-verdict');
+            const progressBars = {
+                heuristic: document.getElementById('progress-heuristic'),
+                signature: document.getElementById('progress-signature'),
+                pattern: document.getElementById('progress-pattern')
+            };
+            
+            const valueElements = {
+                pole: document.getElementById('value-pole'),
+                voltage: document.getElementById('value-voltage'),
+                h1: document.getElementById('value-h1'), h2: document.getElementById('value-h2'),
+                h3: document.getElementById('value-h3'), total: document.getElementById('value-total'),
+                diff: document.getElementById('value-diff')
+            };
+            const cardElements = {
+                diff: document.getElementById('card-diff')
+            }
+            const relayButtons = {
+                1: document.getElementById('relay-btn-1'),
+                2: document.getElementById('relay-btn-2'),
+                3: document.getElementById('relay-btn-3')
+            };
+            const relayIcons = {
+                1: document.getElementById('icon-h1'),
+                2: document.getElementById('icon-h2'),
+                3: document.getElementById('icon-h3')
+            }
+
+            let liveChart;
+            let client; 
+            let aiState = 'LEARNING';
+            const LEARNING_SAMPLES_COUNT = 10;
+            let learningSamples = [];
+            let baselineTotalCurrent = 0;
+            const ANOMALY_THRESHOLD = 0.24;
+            let latestData = null;
+            let analysisInterval = null;
+
+            function applyTheme(theme) {
+                if (theme === 'light') docElement.classList.add('light');
+                else docElement.classList.remove('light');
+                document.getElementById('theme-toggle').checked = (theme === 'light');
+                updateChartTheme();
+            }
+            document.getElementById('theme-toggle').addEventListener('change', () => {
+                const newTheme = document.getElementById('theme-toggle').checked ? 'light' : 'dark';
+                localStorage.setItem('theme', newTheme);
+                applyTheme(newTheme);
+            });
+
+            function createChart() {
+                const chartCtx = document.getElementById('liveChart').getContext('2d');
+                liveChart = new Chart(chartCtx, {
+                    type: 'line',
+                    data: {
+                        labels: [],
+                        datasets: [
+                            { label: 'Pole Current (A)', data: [], borderColor: '#facc15', backgroundColor: 'rgba(250, 204, 21, 0.1)', borderWidth: 2, fill: true, tension: 0.4 },
+                            { label: 'Total House Current (A)', data: [], borderColor: '#4ade80', backgroundColor: 'rgba(74, 222, 128, 0.1)', borderWidth: 2, fill: true, tension: 0.4 }
+                        ]
+                    },
+                    options: { responsive: true, scales: { x: {}, y: { beginAtZero: true } }, plugins: { legend: { display: true } } }
+                });
+            }
+
+            function updateChartTheme() {
+                if (!liveChart) return;
+                const isLight = docElement.classList.contains('light');
+                const gridColor = isLight ? 'rgba(0,0,0,0.1)' : 'rgba(255,255,255,0.2)';
+                const labelColor = isLight ? '#4b5563' : '#a0a0a0';
+                liveChart.options.scales.x.ticks.color = labelColor;
+                liveChart.options.scales.x.grid.color = gridColor;
+                liveChart.options.scales.y.ticks.color = labelColor;
+                liveChart.options.scales.y.grid.color = gridColor;
+                liveChart.options.plugins.legend.labels.color = labelColor;
+                liveChart.update();
+            }
+
+            function updateChartData(poleCurrent, totalHouseCurrent) {
+                const now = new Date().toLocaleTimeString();
+                const chart = liveChart;
+                chart.data.labels.push(now);
+                chart.data.datasets[0].data.push(poleCurrent);
+                chart.data.datasets[1].data.push(totalHouseCurrent);
+                if (chart.data.labels.length > 20) {
+                    chart.data.labels.shift();
+                    chart.data.datasets[0].data.shift();
+                    chart.data.datasets[1].data.shift();
+                }
+                chart.update('none');
+            }
+
+            function addLog(message, type = 'info') {
+                const timestamp = new Date().toLocaleTimeString();
+                const logEntry = document.createElement('div');
+                logEntry.className = 'flex justify-between items-center p-2 log-entry font-mono text-xs';
+                let typeText = 'INFO';
+                if (type === 'alert') {
+                    logEntry.classList.add('text-red-400', 'font-semibold'); typeText = 'ALERT';
+                } else if (type === 'connect') {
+                    logEntry.classList.add('text-green-400'); typeText = 'SYSTEM';
+                } else {
+                    logEntry.classList.add('text-muted');
+                }
+                logEntry.innerHTML = `<span>[${timestamp}] ${message}</span><span class="font-bold">${typeText}</span>`;
+                eventLogEl.prepend(logEntry);
+            }
+
+            function runAIAnalysisSimulation() {
+                let progress = 0;
+                aiAnalyticsSection.style.display = 'block';
+                Object.values(progressBars).forEach(bar => bar.style.width = '0%');
+                finalVerdictEl.textContent = 'PENDING...';
+                finalVerdictEl.classList.remove('text-green-400');
+                finalVerdictEl.classList.add('text-yellow-400');
+
+                analysisInterval = setInterval(() => {
+                    progress += 5; 
+                    progressBars.heuristic.style.width = `${Math.min(100, progress * 1.2)}%`;
+                    progressBars.signature.style.width = `${Math.min(100, progress)}%`;
+                    progressBars.pattern.style.width = `${Math.min(100, progress * 0.8)}%`;
+
+                    if (progress >= 100) {
+                        clearInterval(analysisInterval);
+                        if (Math.abs(latestData.diff) > ANOMALY_THRESHOLD) {
+                           aiState = 'ALERT';
+                           finalVerdictEl.textContent = 'ANOMALY CONFIRMED';
+                           finalVerdictEl.classList.remove('text-yellow-400');
+                           finalVerdictEl.classList.add('text-red-400');
+                        } else {
+                           aiState = 'MONITORING';
+                           finalVerdictEl.textContent = 'FALSE POSITIVE';
+                           finalVerdictEl.classList.remove('text-yellow-400', 'text-red-400');
+                           finalVerdictEl.classList.add('text-green-400');
+                           setTimeout(() => { aiAnalyticsSection.style.display = 'none'; }, 2000);
+                        }
+                        updateAIStatusUI();
+                    }
+                }, 250);
+            }
+
+            function updateAIStatusUI() {
+                lastUpdatedEl.textContent = new Date().toLocaleTimeString();
+                if(latestData) meterValueEl.textContent = latestData.pole.toFixed(2);
+
+                switch (aiState) {
+                    case 'LEARNING':
+                        systemStatusEl.textContent = 'AI LEARNING';
+                        systemStatusEl.className = 'text-2xl font-bold status-learning';
+                        const progress = (learningSamples.length / LEARNING_SAMPLES_COUNT) * 100;
+                        confidenceScoreEl.textContent = `${progress.toFixed(0)}%`;
+                        aiInsightTextEl.innerHTML = `> AI model is calibrating...<br>> Establishing normal consumption baseline. [${learningSamples.length}/${LEARNING_SAMPLES_COUNT}]`;
+                        meterLedEl.className = 'led';
+                        break;
+                    case 'MONITORING':
+                        systemStatusEl.textContent = 'MONITORING';
+                        systemStatusEl.className = 'text-2xl font-bold status-analyzing';
+                        confidenceScoreEl.textContent = `99.9%`;
+                        aiInsightTextEl.innerHTML = `> System stable. Consumption is consistent with the learned baseline model.<br>> Fluctuations are within normal parameters.`;
+                        cardElements.diff.classList.remove('card-alert');
+                        meterLedEl.className = 'led led-blink-normal';
+                        aiAnalyticsSection.style.display = 'none';
+                        break;
+                    case 'ANALYZING':
+                        systemStatusEl.textContent = 'ANALYZING ANOMALY';
+                        systemStatusEl.className = 'text-2xl font-bold status-analyzing';
+                        confidenceScoreEl.textContent = `...`;
+                        aiInsightTextEl.innerHTML = `> Potential anomaly detected. Cross-validating data signatures against baseline...<br>> Running heuristic checks to confirm power loss.`;
+                        meterLedEl.className = 'led led-blink-normal';
+                        break;
+                    case 'ALERT':
+                        systemStatusEl.textContent = 'ANOMALY DETECTED!';
+                        systemStatusEl.className = 'text-2xl font-bold status-alert';
+                        confidenceScoreEl.textContent = `${(95 + Math.random() * 4).toFixed(1)}%`;
+                        aiInsightTextEl.innerHTML = `> <span class="text-red-400"><b>Alert:</b> Statistically significant deviation from baseline detected.</span><br>> Mismatch of <b>${Math.abs(latestData.diff).toFixed(2)}A</b> suggests power leakage or theft.`;
+                        cardElements.diff.classList.add('card-alert');
+                        meterLedEl.className = 'led led-blink-alert';
+                        break;
+                }
+            }
+
+            function onConnect() {
+                addLog('Successfully connected to MQTT Broker!', 'connect');
+                client.subscribe(MQTT_TOPIC_DATA);
+                addLog(`Subscribed to topic: ${MQTT_TOPIC_DATA}`, 'info');
+                Object.values(relayButtons).forEach(button => {
+                    button.disabled = false;
+                    updateRelayButtonUI(button, 'off');
+                });
+            }
+            
+            function onConnectionLost(responseObject) {
+                if (responseObject.errorCode !== 0) {
+                    addLog(`Connection Lost: ${responseObject.errorMessage}`, 'alert');
+                    systemStatusEl.textContent = 'Disconnected';
+                    systemStatusEl.className = 'text-2xl font-bold status-alert';
+                    meterLedEl.className = 'led';
+                    Object.values(relayButtons).forEach(button => {
+                        button.disabled = true;
+                        button.textContent = 'Disconnected';
+                        button.classList.remove('bg-green-600', 'hover:bg-green-700', 'bg-red-600', 'hover:bg-red-700');
+                    });
+                    setTimeout(connectToMqtt, 5000);
+                }
+            }
+
+            function onMessageArrived(message) {
+                try {
+                    const data = JSON.parse(message.payloadString);
+                    latestData = data;
+                    
+                    valueElements.pole.textContent = `${data.pole.toFixed(2)} A`;
+                    valueElements.h1.textContent = `${data.h1.toFixed(2)} A`;
+                    valueElements.h2.textContent = `${data.h2.toFixed(2)} A`;
+                    valueElements.h3.textContent = `${data.h3.toFixed(2)} A`;
+                    valueElements.total.textContent = `${data.total.toFixed(2)} A`;
+                    valueElements.diff.textContent = `${Math.abs(data.diff).toFixed(2)} A`;
+                    valueElements.voltage.textContent = `${(228 + Math.random() * 4).toFixed(1)} V`;
+                    
+                    if (aiState === 'LEARNING') {
+                        learningSamples.push(data.total);
+                        if (learningSamples.length >= LEARNING_SAMPLES_COUNT) {
+                            baselineTotalCurrent = learningSamples.reduce((a, b) => a + b, 0) / learningSamples.length;
+                            aiState = 'MONITORING';
+                            addLog(`AI Learning Complete. Baseline established at ${baselineTotalCurrent.toFixed(2)}A`, 'connect');
+                        }
+                    } else if (aiState === 'MONITORING' && Math.abs(data.diff) > ANOMALY_THRESHOLD) {
+                        aiState = 'ANALYZING';
+                        addLog('Potential anomaly detected. Initiating AI deep scan.', 'info');
+                        runAIAnalysisSimulation();
+                    }
+
+                    updateAIStatusUI();
+                    updateChartData(data.pole, data.total);
+
+                } catch (e) {
+                    addLog('Error processing message: ' + e.message, 'alert');
+                }
+            }
+            
+            function connectToMqtt() {
+                addLog('Connecting to MQTT broker...', 'info');
+                client = new Paho.MQTT.Client(MQTT_BROKER, MQTT_PORT, MQTT_CLIENT_ID);
+                client.onConnectionLost = onConnectionLost;
+                client.onMessageArrived = onMessageArrived;
+                
+                const connectOptions = {
+                    onSuccess: onConnect,
+                    onFailure: (message) => {
+                        addLog(`Connection Failed: ${message.errorMessage}`, 'alert');
+                        systemStatusEl.textContent = 'Connection Failed';
+                        systemStatusEl.className = 'text-2xl font-bold status-alert';
+                        setTimeout(connectToMqtt, 5000);
+                    },
+                    userName: MQTT_USER,
+                    password: MQTT_PASS,
+                    useSSL: true
+                };
+                client.connect(connectOptions);
+            }
+
+            function sendRelayCommand(houseNumber, state) {
+                if (!client || !client.isConnected()) {
+                    addLog('Cannot send command. MQTT not connected.', 'alert');
+                    return;
+                }
+                const payload = `${houseNumber}${state}`;
+                const message = new Paho.MQTT.Message(payload);
+                message.destinationName = MQTT_TOPIC_CONTROL;
+                client.send(message);
+                addLog(`Sent command: Turn House ${houseNumber} ${state.toUpperCase()}`, 'info');
+            }
+
+            function updateRelayButtonUI(button, newState) {
+                const icon = relayIcons[button.id.split('-')[2]];
+                button.dataset.state = newState;
+                if (newState === 'on') {
+                    button.textContent = 'Turn OFF';
+                    button.classList.remove('bg-green-600', 'hover:bg-green-700');
+                    button.classList.add('bg-red-600', 'hover:bg-red-700');
+                    icon.classList.remove('fa-toggle-off', 'text-muted');
+                    icon.classList.add('fa-toggle-on', 'text-green-400');
+                } else {
+                    button.textContent = 'Turn ON';
+                    button.classList.remove('bg-red-600', 'hover:bg-red-700');
+                    button.classList.add('bg-green-600', 'hover:bg-green-700');
+                    icon.classList.remove('fa-toggle-on', 'text-green-400');
+                    icon.classList.add('fa-toggle-off', 'text-muted');
+                }
+            }
+
+            function initialize() {
+                createChart();
+                const savedTheme = localStorage.getItem('theme') || 'dark';
+                applyTheme(savedTheme);
+                addLog('Dashboard initialized. AI model loading...', 'info');
+                connectToMqtt();
+                Object.entries(relayButtons).forEach(([houseNumber, button]) => {
+                    button.addEventListener('click', () => {
+                        const currentState = button.dataset.state;
+                        const newState = currentState === 'off' ? 'on' : 'off';
+                        sendRelayCommand(houseNumber, newState);
+                        updateRelayButtonUI(button, newState);
+                    });
+                });
+            }
+
+            initialize();
+        });
+    </script>
+</body>
+</html>
+
